@@ -1,8 +1,9 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AutomationChat } from '@/components/AutomationChat';
 import { ResultsDisplay } from '@/components/ResultsDisplay';
 import { StatusBar } from '@/components/StatusBar';
+import { MCPService } from '@/services/MCPService';
 
 export interface AutomationResult {
   type: 'action' | 'data';
@@ -15,34 +16,75 @@ export interface AutomationResult {
 const Index = () => {
   const [results, setResults] = useState<AutomationResult[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [mcpService, setMcpService] = useState<MCPService | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+
+  useEffect(() => {
+    // Initialize MCP connection
+    const initializeMCP = async () => {
+      setConnectionStatus('connecting');
+      try {
+        const service = new MCPService();
+        await service.connect();
+        setMcpService(service);
+        setConnectionStatus('connected');
+      } catch (error) {
+        console.error('Failed to connect to MCP:', error);
+        setConnectionStatus('error');
+      }
+    };
+
+    initializeMCP();
+
+    return () => {
+      if (mcpService) {
+        mcpService.disconnect();
+      }
+    };
+  }, []);
 
   const handleAutomationRequest = async (request: string) => {
+    if (!mcpService || connectionStatus !== 'connected') {
+      const errorResult: AutomationResult = {
+        type: 'action',
+        content: { error: 'MCP service not connected' },
+        timestamp: new Date(),
+        status: 'error',
+        message: 'Please ensure MCP server is connected before making requests'
+      };
+      setResults(prev => [errorResult, ...prev]);
+      return;
+    }
+
     setIsProcessing(true);
     
-    // Simulate processing delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Mock result - in real implementation, this would come from your MCP server
-    const mockResult: AutomationResult = {
-      type: request.toLowerCase().includes('scrape') || request.toLowerCase().includes('data') || request.toLowerCase().includes('collect') ? 'data' : 'action',
-      content: request.toLowerCase().includes('scrape') ? {
-        title: 'Scraped Data Results',
-        data: [
-          { name: 'Product A', price: '$99.99', rating: 4.5 },
-          { name: 'Product B', price: '$149.99', rating: 4.2 },
-          { name: 'Product C', price: '$79.99', rating: 4.8 }
-        ]
-      } : {
-        action: request,
-        result: 'Successfully completed automation task'
-      },
-      timestamp: new Date(),
-      status: 'success',
-      message: request.toLowerCase().includes('scrape') ? 'Data successfully scraped and processed' : 'Automation action completed successfully'
-    };
-    
-    setResults(prev => [mockResult, ...prev]);
-    setIsProcessing(false);
+    try {
+      const result = await mcpService.processRequest(request);
+      
+      const automationResult: AutomationResult = {
+        type: result.type,
+        content: result.content,
+        timestamp: new Date(),
+        status: result.success ? 'success' : 'error',
+        message: result.message
+      };
+      
+      setResults(prev => [automationResult, ...prev]);
+    } catch (error) {
+      console.error('Automation request failed:', error);
+      
+      const errorResult: AutomationResult = {
+        type: 'action',
+        content: { error: error instanceof Error ? error.message : 'Unknown error' },
+        timestamp: new Date(),
+        status: 'error',
+        message: 'Failed to process automation request'
+      };
+      
+      setResults(prev => [errorResult, ...prev]);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -59,7 +101,11 @@ const Index = () => {
         </div>
 
         {/* Status Bar */}
-        <StatusBar isProcessing={isProcessing} resultsCount={results.length} />
+        <StatusBar 
+          isProcessing={isProcessing} 
+          resultsCount={results.length}
+          connectionStatus={connectionStatus}
+        />
 
         {/* Main Content Grid */}
         <div className="grid lg:grid-cols-2 gap-6 mt-6">
@@ -68,6 +114,7 @@ const Index = () => {
             <AutomationChat 
               onSubmit={handleAutomationRequest} 
               isProcessing={isProcessing}
+              isConnected={connectionStatus === 'connected'}
             />
           </div>
 
