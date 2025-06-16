@@ -1,7 +1,8 @@
-
 export interface MCPRequest {
+  id: string;
   request: string;
   type: 'action' | 'data';
+  timestamp: string;
 }
 
 export interface MCPResponse {
@@ -11,70 +12,101 @@ export interface MCPResponse {
   message: string;
 }
 
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+type ConnectionStatusListener = (status: ConnectionStatus) => void;
+
 export class MCPService {
   private websocket: WebSocket | null = null;
-  private isConnected: boolean = false;
+  private connectionStatus: ConnectionStatus = 'disconnected';
+  private connectionStatusListeners: ConnectionStatusListener[] = [];
   private pendingRequests: Map<string, (response: MCPResponse) => void> = new Map();
 
+  private setConnectionStatus(status: ConnectionStatus) {
+    console.log(`[MCPService] Setting connection status to: ${status}`);
+    this.connectionStatus = status;
+    this.connectionStatusListeners.forEach(listener => listener(status));
+  }
+
+  addConnectionStatusListener(listener: ConnectionStatusListener) {
+    this.connectionStatusListeners.push(listener);
+    listener(this.connectionStatus); // Immediately notify with current status
+  }
+
+  removeConnectionStatusListener(listener: ConnectionStatusListener) {
+    this.connectionStatusListeners = this.connectionStatusListeners.filter(l => l !== listener);
+  }
+
   async connect(): Promise<void> {
+    console.log('[MCPService] Attempting to connect...');
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      console.log('[MCPService] Already connected.');
+      return;
+    }
+    this.setConnectionStatus('connecting');
     return new Promise((resolve, reject) => {
       try {
         // This URL should be configured based on your MCP server setup
         // For now, using a placeholder - you'll need to replace with actual MCP endpoint
-        const mcpUrl = process.env.REACT_APP_MCP_URL || 'ws://localhost:8080/mcp';
+        const mcpUrl = import.meta.env.VITE_MCP_URL || 'ws://localhost:8080/mcp';
+        console.log(`[MCPService] Connecting to WebSocket at: ${mcpUrl}`);
         
         this.websocket = new WebSocket(mcpUrl);
         
         this.websocket.onopen = () => {
-          console.log('Connected to MCP server');
-          this.isConnected = true;
+          console.log('[MCPService] WebSocket connection opened.');
+          this.setConnectionStatus('connected');
           resolve();
         };
         
         this.websocket.onmessage = (event) => {
+          console.log('[MCPService] Received message:', event.data);
           try {
             const response = JSON.parse(event.data);
             this.handleMCPResponse(response);
           } catch (error) {
-            console.error('Failed to parse MCP response:', error);
+            console.error('[MCPService] Failed to parse MCP response:', error);
           }
         };
         
-        this.websocket.onclose = () => {
-          console.log('Disconnected from MCP server');
-          this.isConnected = false;
+        this.websocket.onclose = (event) => {
+          console.log(`[MCPService] WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`);
+          this.setConnectionStatus('disconnected');
         };
         
         this.websocket.onerror = (error) => {
-          console.error('MCP WebSocket error:', error);
-          this.isConnected = false;
+          console.error('[MCPService] WebSocket error:', error);
+          this.setConnectionStatus('error');
           reject(new Error('Failed to connect to MCP server'));
         };
         
         // Timeout after 10 seconds
         setTimeout(() => {
-          if (!this.isConnected) {
+          if (this.connectionStatus !== 'connected') {
+            console.log('[MCPService] Connection timed out after 10 seconds.');
+            this.setConnectionStatus('error');
             reject(new Error('MCP connection timeout'));
           }
         }, 10000);
         
       } catch (error) {
+        console.error('[MCPService] Error in connect method:', error);
         reject(error);
       }
     });
   }
 
-  async processRequest(request: string): Promise<MCPResponse> {
-    if (!this.isConnected || !this.websocket) {
+  async processRequest(request: string, type: 'action' | 'data' = 'data'): Promise<MCPResponse> {
+    if (this.connectionStatus !== 'connected' || !this.websocket) {
       throw new Error('MCP service not connected');
     }
 
     return new Promise((resolve, reject) => {
       const requestId = this.generateRequestId();
       
-      const mcpRequest = {
+      const mcpRequest: MCPRequest = {
         id: requestId,
         request: request,
+        type: type,
         timestamp: new Date().toISOString()
       };
 
@@ -119,11 +151,13 @@ export class MCPService {
       this.websocket.close();
       this.websocket = null;
     }
-    this.isConnected = false;
+    this.setConnectionStatus('disconnected');
     this.pendingRequests.clear();
   }
 
-  getConnectionStatus(): boolean {
-    return this.isConnected;
+  getConnectionStatus(): ConnectionStatus {
+    return this.connectionStatus;
   }
 }
+
+export const mcpService = new MCPService();

@@ -1,9 +1,8 @@
-
 import { useState, useEffect } from 'react';
 import { AutomationChat } from '@/components/AutomationChat';
 import { ResultsDisplay } from '@/components/ResultsDisplay';
 import { StatusBar } from '@/components/StatusBar';
-import { MCPService } from '@/services/MCPService';
+import { mcpService, ConnectionStatus } from '@/services/MCPService';
 
 export interface AutomationResult {
   type: 'action' | 'data';
@@ -16,35 +15,27 @@ export interface AutomationResult {
 const Index = () => {
   const [results, setResults] = useState<AutomationResult[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [mcpService, setMcpService] = useState<MCPService | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
 
   useEffect(() => {
-    // Initialize MCP connection
-    const initializeMCP = async () => {
-      setConnectionStatus('connecting');
-      try {
-        const service = new MCPService();
-        await service.connect();
-        setMcpService(service);
-        setConnectionStatus('connected');
-      } catch (error) {
-        console.error('Failed to connect to MCP:', error);
-        setConnectionStatus('error');
-      }
+    // Initiate the connection when the component mounts
+    mcpService.connect().catch(err => {
+      console.error("Initial MCP connection failed:", err);
+    });
+
+    const handleStatusChange = (status: ConnectionStatus) => {
+      setConnectionStatus(status);
     };
 
-    initializeMCP();
+    mcpService.addConnectionStatusListener(handleStatusChange);
 
     return () => {
-      if (mcpService) {
-        mcpService.disconnect();
-      }
+      mcpService.removeConnectionStatusListener(handleStatusChange);
     };
   }, []);
 
   const handleAutomationRequest = async (request: string) => {
-    if (!mcpService || connectionStatus !== 'connected') {
+    if (connectionStatus !== 'connected') {
       const errorResult: AutomationResult = {
         type: 'action',
         content: { error: 'MCP service not connected' },

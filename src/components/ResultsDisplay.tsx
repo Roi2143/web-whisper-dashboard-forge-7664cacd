@@ -73,9 +73,20 @@ export const ResultsDisplay = ({ results }: ResultsDisplayProps) => {
             <DataDashboard data={result.content} />
           ) : (
             <div className="bg-slate-700/30 rounded-lg p-3">
-              <p className="text-slate-200 text-sm font-medium mb-1">Action Completed:</p>
-              <p className="text-slate-300 text-sm">{result.content.action}</p>
-              <p className="text-green-400 text-xs mt-2">{result.content.result}</p>
+              {typeof result.content === 'object' && result.content !== null ? (
+                <>
+                  {result.content.action && <p className="text-slate-200 text-sm font-medium mb-1">Action: {result.content.action}</p>}
+                  {result.content.result && <p className="text-green-400 text-xs mt-2">Result: {result.content.result}</p>}
+                  {result.content.screenshot && (
+                    <div className="mt-3">
+                      <p className="text-slate-300 text-sm mb-2">Screenshot:</p>
+                      <img src={result.content.screenshot} alt="Playwright Screenshot" className="rounded-lg border border-slate-600" />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-slate-300 text-sm">{String(result.content)}</p>
+              )}
             </div>
           )}
         </Card>
